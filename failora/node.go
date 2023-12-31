@@ -5,47 +5,6 @@
 // 	"time"
 // )
 
-// const (
-// 	compactnessWeight   = 0.5 // Adjust as needed
-// 	latencyWeight       = 0.5 // Adjust as needed
-// 	currentWeightFactor = 0.3
-// )
-
-// type NetworkNode struct {
-// 	id           int32
-// 	successor    *NetworkNode
-// 	address      string
-// 	isTimeServer bool
-// 	mu           sync.Mutex
-// }
-
-// type SelfNode struct {
-// 	NetworkNode
-// 	timeState           TimeServerData
-// 	satisfactionWeights map[int]float64
-// }
-
-// func NewSelfNode(id int32, address string) *SelfNode {
-// 	node := &SelfNode{
-// 		NetworkNode: NetworkNode{
-// 			id:      id,
-// 			address: address,
-// 		},
-// 		timeState: TimeServerData{
-// 			current: CurrentTimeServerState{
-// 				nodeId:           id,
-// 				requestCount:     0,
-// 				isTimeServer:     false,
-// 				time:             0,
-// 				lastFiveRequests: []int64{},
-// 			},
-// 		},
-// 		satisfactionWeights: map[int]float64{},
-// 	}
-
-// 	return node
-// }
-
 // func (n *SelfNode) UpdateSatisfactionWeights(nodeID int, requestLatency float64) {
 // 	if n.timeState.current.isTimeServer || requestLatency <= 0 {
 // 		return
@@ -72,34 +31,6 @@
 // 	n.satisfactionWeights[nodeID] = averageWeight
 // }
 
-// func (n *SelfNode) calculateCompactnessScore() float64 {
-
-// 	// Add the current time to the list of last 5 requests
-// 	if len(n.timeState.current.lastFiveRequests) >= 5 {
-// 		n.timeState.current.lastFiveRequests = n.timeState.current.lastFiveRequests[1:] // Remove the oldest
-// 	}
-// 	n.timeState.current.lastFiveRequests = append(n.timeState.current.lastFiveRequests, time.Now().Unix())
-
-// 	length := len(n.timeState.current.lastFiveRequests)
-// 	if length < 2 {
-// 		return 1.0 // Default high score if not enough data
-// 	}
-
-// 	var totalDifference int64
-// 	for i := 1; i < length; i++ {
-// 		difference := n.timeState.current.lastFiveRequests[i] - n.timeState.current.lastFiveRequests[i-1]
-// 		// Smaller differences contribute more to the score
-// 		totalDifference += difference
-// 	}
-
-// 	// Get the average difference
-// 	averageDifference := totalDifference / int64(length-1)
-
-// 	// Invert the average difference to get the score (smaller differences yield higher scores)
-// 	compactnessScore := 1.0 / float64(averageDifference)
-// 	return compactnessScore
-// }
-
 // func (n *SelfNode) UpdateTimeServer(newTimeServerId int32) {
 // 	n.timeState.current.requestCount = 0
 // 	n.timeState.current.nodeId = newTimeServerId
@@ -117,14 +48,27 @@ import (
 	"net"
 	"net/rpc"
 	"sync"
+	"time"
 )
 
+type Peer struct {
+	id           int32
+	address      string
+	isTimeServer bool
+	mu           sync.Mutex
+	election     int32
+}
+
 type SelfNode struct {
-	ID                  int
-	isTimeServer        bool
-	timeState           TimeState
-	satisfactionWeights map[int]float64
-	mu                  sync.Mutex
+	id                    int32
+	address               string
+	leaderId              int32
+	mu                    sync.Mutex
+	peers                 map[int32]*Peer
+	timeState             TimeServerData
+	satisfactionWeights   map[int32]float64
+	leaderInteractionData map[int32][]int32 // map[nodeA] = [interaction #1 time with nodeA, interaction #2 time with nodeA, interaction #3 time with nodeA...]
+	election              int32
 }
 
 type TimeState struct {
@@ -147,11 +91,13 @@ const (
 )
 
 // NewSelfNode creates a new SelfNode with Given ID and initializes its RPC server.
-func NewSelfNode(id int, port string) *SelfNode {
+func NewSelfNode(id int, port string, peers []Peer) *SelfNode {
 	node := &SelfNode{
-		ID:                  id,
-		satisfactionWeights: make(map[int]float64),
+		id:                  int32(id),
+		satisfactionWeights: make(map[int32]float64),
+		peers:               make(map[int32]*Peer),
 	}
+
 	go node.startRPCServer(port)
 	return node
 }
@@ -174,10 +120,10 @@ func (n *SelfNode) startRPCServer(port string) {
 	rpc.Register(n)
 	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		log.Fatalf("Error starting RPC server for node %d: %v", n.ID, err)
+		log.Fatalf("Error starting RPC server for node %d: %v", n.id, err)
 	}
 	go rpc.Accept(ln)
-	fmt.Printf("Node %d RPC server started on port %s\n", n.ID, port)
+	fmt.Printf("Node %d RPC server started on port %s\n", n.id, port)
 }
 
 // RPC Method: ShareInteractionData allows a node to share its interaction data with this node.
@@ -189,3 +135,31 @@ func (n *SelfNode) ShareInteractionData(data InteractionData, reply *bool) error
 
 // Other necessary RPC methods can be defined here.
 // ...
+
+func (n *SelfNode) calculateCompactnessScore() float64 {
+
+	// Add the current time to the list of last 5 requests
+	if len(n.timeState.current.lastFiveRequests) >= 5 {
+		n.timeState.current.lastFiveRequests = n.timeState.current.lastFiveRequests[1:] // Remove the oldest
+	}
+	n.timeState.current.lastFiveRequests = append(n.timeState.current.lastFiveRequests, time.Now().Unix())
+
+	length := len(n.timeState.current.lastFiveRequests)
+	if length < 2 {
+		return 1.0 // Default high score if not enough data
+	}
+
+	var totalDifference int64
+	for i := 1; i < length; i++ {
+		difference := n.timeState.current.lastFiveRequests[i] - n.timeState.current.lastFiveRequests[i-1]
+		// Smaller differences contribute more to the score
+		totalDifference += difference
+	}
+
+	// Get the average difference
+	averageDifference := totalDifference / int64(length-1)
+
+	// Invert the average difference to get the score (smaller differences yield higher scores)
+	compactnessScore := 1.0 / float64(averageDifference)
+	return compactnessScore
+}
