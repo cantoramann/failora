@@ -1,27 +1,72 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+	"strconv"
+)
+
+func port(tag string, host int) string {
+	s := "/var/tmp/824-"
+	s += strconv.Itoa(os.Getuid()) + "/"
+	os.Mkdir(s, 0777)
+	s += "failora-"
+	s += strconv.Itoa(os.Getpid()) + "-"
+	s += tag + "-"
+	s += strconv.Itoa(host)
+	return s
+}
 
 func main() {
 
-	// Example: Initialize nodes
-	nodeA := NewSelfNode(1, "8080")
-	nodeB := NewSelfNode(2, "8081")
-	nodeC := NewSelfNode(3, "8082")
-	nodeD := NewSelfNode(4, "8083")
-	nodeE := NewSelfNode(5, "8084")
-	nodeF := NewSelfNode(6, "8085")
-	nodeG := NewSelfNode(7, "8086")
-	nodeH := NewSelfNode(8, "8087")
-	nodeI := NewSelfNode(9, "8088")
-	nodeJ := NewSelfNode(10, "8089")
-	nodeK := NewSelfNode(11, "8090")
-	nodeL := NewSelfNode(12, "8091")
-	nodeM := NewSelfNode(13, "8092")
-	nodeN := NewSelfNode(14, "8093")
-	nodeO := NewSelfNode(15, "8094")
-	nodeP := NewSelfNode(16, "8095")
-	nodeQ := NewSelfNode(17, "8096")
+	tag := "failora"
+
+	// make 5 Peers with socket paths using port() function
+	peer1 := Peer{
+		id:             1,
+		socketPath:     port(tag, 1),
+		isTimeServer:   false,
+		latestElection: -1,
+	}
+	peer2 := Peer{
+		id:             2,
+		socketPath:     port(tag, 2),
+		isTimeServer:   false,
+		latestElection: -1,
+	}
+	peer3 := Peer{
+		id:             3,
+		socketPath:     port(tag, 3),
+		isTimeServer:   false,
+		latestElection: -1,
+	}
+	peer4 := Peer{
+		id:             4,
+		socketPath:     port(tag, 4),
+		isTimeServer:   false,
+		latestElection: -1,
+	}
+	peer5 := Peer{
+		id:             5,
+		socketPath:     port(tag, 5),
+		isTimeServer:   false,
+		latestElection: -1,
+	}
+
+	// make a map of the peer ids to the peers
+	peers := make(map[int32]*Peer)
+	peers[peer1.id] = &peer1
+	peers[peer2.id] = &peer2
+	peers[peer3.id] = &peer3
+	peers[peer4.id] = &peer4
+	peers[peer5.id] = &peer5
+
+	// NewSelfNode() initializes the node state and starts the RPC server
+	node1 := NewSelfNode(peer1.id, peer1.socketPath, peers)
+	node2 := NewSelfNode(peer2.id, peer2.socketPath, peers)
+	node3 := NewSelfNode(peer3.id, peer3.socketPath, peers)
+	node4 := NewSelfNode(peer4.id, peer4.socketPath, peers)
+	node5 := NewSelfNode(peer5.id, peer5.socketPath, peers)
 
 	// node A was the leader. It goes down.
 	// node B discovered it first. B gets the timestamp of its discovery.
@@ -35,11 +80,8 @@ func main() {
 
 	// Additional nodes...
 
-	nodeA.startRPCServer("8080")
-	nodeB.startRPCServer("8081")
-
 	// Main remains minimal - nodes operate autonomously after initialization
-	fmt.Println("Nodes initialized and servers started", nodeA, nodeB)
+	fmt.Println("Nodes initialized and servers started", node1, node2, node3, node4, node5)
 	// The main function can block here or handle other master-level tasks
 	select {} // Blocks forever
 }
