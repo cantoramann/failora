@@ -69,11 +69,22 @@ type SelfNode struct {
 	me                    string
 	leaderId              int32
 	latestElection        int32
+	electionState         Election // necessary state of the current OR most recently decided election (whichever is more recent)
 	peers                 map[int32]*Peer
 	timeState             TimeServerData
 	satisfactionWeights   map[int32]float64
 	leaderInteractionData map[int32][]int32 // map[nodeA] = [interaction #1 time with nodeA, interaction #2 time with nodeA, interaction #3 time with nodeA...]
 	isDead                bool              // this is for testing purposes so we can kill nodes for them to stop sending heartbeats
+}
+
+// necessary state of the current OR most recently decided election (whichever is more recent)
+// if there is no current election in progress, this will be the most recent election, latestElection
+// if there is an election in progress, this will be latestElection + 1
+type Election struct {
+	electionLeaderId int32 //not to be confused with the system leader, the election leader is the node that initiated the election
+	electionId       int32
+	votes            map[int32]int32 // map[nodeA] = nodeB, where nodeA voted for nodeB
+	electionComplete bool
 }
 
 type TimeState struct {
@@ -100,6 +111,20 @@ type HeartbeatReply struct {
 	latestElection int32
 	leaderId       int32
 	Err            Err
+}
+
+type NewElectionArgs struct {
+	newElectionId     int32
+	oldLeaderId       int32
+	electionInitiated bool // if this is true, then the electionLeader already received OK from all peers re. starting a new election
+	electionLeaderId  int32
+}
+
+type NewElectionReply struct {
+	currentElectionId int32 // will be used if the responding node knows of a newer completed election (disagree to start new election)
+	currentLeaderId   int32 // "
+	Err               Err   // will reply OK if the responding node agrees to start a new election on newElectionId
+	vote              int32 // only if the election is already initiated and we are casting our vote to the electionLeader
 }
 
 type Err string
@@ -129,6 +154,7 @@ func NewSelfNode(id int32, socketPath string, peers map[int32]*Peer) *SelfNode {
 		me:                    socketPath,
 		leaderId:              -1,
 		latestElection:        -1,
+		electionState:         Election{},
 		peers:                 peers,
 		timeState:             TimeServerData{},
 		satisfactionWeights:   make(map[int32]float64),
@@ -195,7 +221,7 @@ func (n *SelfNode) CalculateCompactnessScore() float64 {
 }
 
 // tick function which periodically pings the leader, and updates scores and interaction data
-// in an implementation where nodes store state data, this would be a put/get request initiated by a client
+// in an implementation where nodes store state data, this would be a put/get request initiated by a client rather than a periodic ping
 func (n *SelfNode) tick() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -214,9 +240,14 @@ func (n *SelfNode) tick() {
 	// *update scores
 	// *update interaction data
 
-	// if the leader is down, start a new election
+	// if the leader is down and there is no current ONGOING election, start a new election
 	if reply == nil {
-		n.startElection()
+		elecDone := false
+		elecDone = n.startElection()
+		// continue waiting in a loop while startElection() hasn't returned yet
+		for !elecDone {
+			time.Sleep(1 * time.Second)
+		}
 	}
 
 	// the reply tells us we are aware of an old election or leader,
@@ -229,13 +260,57 @@ func (n *SelfNode) tick() {
 }
 
 // start new election
-func (n *SelfNode) startElection() error {
+func (n *SelfNode) startElection() bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	n.latestElection = n.id
+	// broadcast new election number latestElection + 1 AND the latest election data to all peers
+	// the first gossip is an attempt to initiate a new election
+	firstGossipArgs := &NewElectionArgs{
+		newElectionId:     n.latestElection + 1,
+		oldLeaderId:       n.leaderId,
+		electionInitiated: false,
+		electionLeaderId:  n.id,
+	}
 
-	return nil
+	// keep track of the number of OKs we receive
+	oks := 0
+	// votes
+	votes := make(map[int32]int32)
+
+	// call NewElection RPC handler on all peers
+	for _, peer := range n.peers {
+		reply := &NewElectionReply{}
+
+		Call(peer.socketPath, "SelfNode.NewElection", firstGossipArgs, &reply)
+
+		if reply.Err == OK {
+			oks++
+			// TODO: add the vote to the votes map
+		} else if reply.Err == ErrOldElection {
+			// if we receive an ErrOldElection, update our latestElection and leaderId
+			n.latestElection = reply.currentElectionId
+			n.leaderId = reply.currentLeaderId
+			// end the initiation attempt by returning true to the tick() function (which will run again with the NEW leaderId saved)
+			return true
+		}
+	}
+
+	// if we received OK from a majority of peers, without being told by any peer that we had an old election,
+	// we can declare the election initiated, and tally up the votes to select a new leader
+	// then we can append the new leader to the election state, set electionComplete to true, then broadcast election state to all peers
+	if oks > len(n.peers)/2 {
+		// update the local election state
+		n.electionState.electionId = n.latestElection + 1
+		n.electionState.electionLeaderId = n.id
+		n.electionState.electionComplete = false
+		n.electionState.votes = make(map[int32]int32)
+		// NOTE: add our own vote to the map
+
+	}
+
+	// if the OKs were not from a majority of peers, returning true below to the tick() function will cause it to run again with the OLD leaderId
+	return true
 }
 
 /////////////////////////////////////////////
@@ -286,7 +361,7 @@ func (n *SelfNode) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) error {
 }
 
 // RPC Handler: receive election
-func (n *SelfNode) ReceiveElection() error {
+func (n *SelfNode) NewElection() error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
