@@ -85,6 +85,7 @@ type Election struct {
 	electionId       int32
 	votes            map[int32]int32 // map[nodeA] = nodeB, where nodeA voted for nodeB
 	electionComplete bool
+	newLeaderId      int32 // the new leader of the system, once the election is complete
 }
 
 type TimeState struct {
@@ -125,6 +126,14 @@ type NewElectionReply struct {
 	currentLeaderId   int32 // "
 	Err               Err   // will reply OK if the responding node agrees to start a new election on newElectionId
 	vote              int32 // only if the election is already initiated and we are casting our vote to the electionLeader
+}
+
+type ReceiveCompletedElectionArgs struct {
+	electionState Election
+}
+
+type ReceiveCompletedElectionReply struct {
+	Err Err
 }
 
 type Err string
@@ -286,7 +295,8 @@ func (n *SelfNode) startElection() bool {
 
 		if reply.Err == OK {
 			oks++
-			// TODO: add the vote to the votes map
+			// add the vote to the votes map
+			votes[peer.id] = reply.vote
 		} else if reply.Err == ErrOldElection {
 			// if we receive an ErrOldElection, update our latestElection and leaderId
 			n.latestElection = reply.currentElectionId
@@ -297,21 +307,52 @@ func (n *SelfNode) startElection() bool {
 	}
 
 	// if we received OK from a majority of peers, without being told by any peer that we had an old election,
-	// we can declare the election initiated, and tally up the votes to select a new leader
+	// we can declare the election done, and tally up the votes to select a new leader
 	// then we can append the new leader to the election state, set electionComplete to true, then broadcast election state to all peers
 	if oks > len(n.peers)/2 {
 		// update the local election state
 		n.electionState.electionId = n.latestElection + 1
 		n.electionState.electionLeaderId = n.id
-		n.electionState.electionComplete = false
-		n.electionState.votes = make(map[int32]int32)
-		// NOTE: add our own vote to the map
+		n.electionState.electionComplete = true
+		// NOTE for Can: add our own vote to the votes map (however that's done)
+		n.electionState.votes = votes
 
-	}
+		voteCounts := make(map[int32]int32)
+		maxVotes := int32(0)
+		newLeader := int32(-1)
+		for _, vote := range votes {
+			voteCounts[vote]++
+			if voteCounts[vote] > maxVotes {
+				maxVotes = voteCounts[vote]
+				newLeader = vote
+			}
+		}
+
+		n.electionState.newLeaderId = newLeader
+
+		// broadcast the election state to all peers
+		oks := 0
+		for oks <= len(n.peers)/2 {
+			oks = 0
+			for _, peer := range n.peers {
+				reply := &ReceiveCompletedElectionReply{}
+				args := &ReceiveCompletedElectionArgs{
+					electionState: n.electionState,
+				}
+
+				Call(peer.socketPath, "SelfNode.ReceiveCompletedElection", args, &reply)
+
+				if reply.Err == OK {
+					oks++
+				}
+			} // END FOR EACH PEER
+		} // END WHILE OKS < MAJORITY
+
+	} // END IF
 
 	// if the OKs were not from a majority of peers, returning true below to the tick() function will cause it to run again with the OLD leaderId
 	return true
-}
+} // END startElection()
 
 /////////////////////////////////////////////
 /////////        RPC Handlers       /////////
@@ -364,6 +405,16 @@ func (n *SelfNode) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) error {
 func (n *SelfNode) NewElection() error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+
+	// TODO
+
+	return nil
+}
+
+// RPC Handler: receive election state
+func (n *SelfNode) ReceiveCompletedElection() error {
+
+	// TODO
 
 	return nil
 }
