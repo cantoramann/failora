@@ -26,35 +26,35 @@ func main() {
 		id:             1,
 		socketPath:     port(tag, 1),
 		isTimeServer:   false,
-		latestElection: -1,
+		latestElection: 0,
 	}
 	peer2 := Peer{
 		id:             2,
 		socketPath:     port(tag, 2),
 		isTimeServer:   false,
-		latestElection: -1,
+		latestElection: 0,
 	}
 	peer3 := Peer{
 		id:             3,
 		socketPath:     port(tag, 3),
 		isTimeServer:   false,
-		latestElection: -1,
+		latestElection: 0,
 	}
 	peer4 := Peer{
 		id:             4,
 		socketPath:     port(tag, 4),
 		isTimeServer:   false,
-		latestElection: -1,
+		latestElection: 0,
 	}
 	peer5 := Peer{
 		id:             5,
 		socketPath:     port(tag, 5),
 		isTimeServer:   false,
-		latestElection: -1,
+		latestElection: 0,
 	}
 
 	// make a map of the peer ids to the peers
-	peers := make(map[int32]*Peer)
+	peers := make(map[uint32]*Peer)
 	peers[peer1.id] = &peer1
 	peers[peer2.id] = &peer2
 	peers[peer3.id] = &peer3
