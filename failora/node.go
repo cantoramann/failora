@@ -314,8 +314,8 @@ func (n *SelfNode) startElection() bool {
 		n.electionState.electionId = n.latestElection + 1
 		n.electionState.electionLeaderId = n.id
 		n.electionState.electionComplete = true
-		// NOTE for Can: add our own vote to the votes map (however that's done)
 		n.electionState.votes = votes
+		n.electionState.votes[n.id] = castVote()
 
 		voteCounts := make(map[int32]int32)
 		maxVotes := int32(0)
@@ -402,19 +402,35 @@ func (n *SelfNode) Heartbeat(args *HeartbeatArgs, reply *HeartbeatReply) error {
 }
 
 // RPC Handler: receive election
-func (n *SelfNode) NewElection() error {
+func (n *SelfNode) NewElection(args *NewElectionArgs, reply *NewElectionReply) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	// TODO
+	// if the peer that called this is on an old election, update them
+	if args.newElectionId <= n.latestElection {
+		reply.Err = ErrOldElection
+		reply.currentElectionId = n.latestElection
+		reply.currentLeaderId = n.leaderId
+		return nil
+	}
+
+	// otherwise, just cast a vote for the election leader and return OK
+	reply.Err = OK
+	reply.vote = castVote()
 
 	return nil
 }
 
 // RPC Handler: receive election state
-func (n *SelfNode) ReceiveCompletedElection() error {
+func (n *SelfNode) ReceiveCompletedElection(args *ReceiveCompletedElectionArgs, reply *ReceiveCompletedElectionReply) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 
-	// TODO
+	// coerce this node to update the local election state and all local data
+	n.electionState = args.electionState
+	n.latestElection = args.electionState.electionId
+	n.leaderId = args.electionState.newLeaderId
 
+	reply.Err = OK
 	return nil
 }
