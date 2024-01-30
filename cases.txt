@@ -1,0 +1,29 @@
+PHASE 1: Gio
+```
+Node A is the leader has election 50
+Node B has election 48
+
+Node D (election 46). It made a request to leader of 46, which is C.
+C responds with { new leader, new election count }. D updates.
+
+D makes a request to A, leader of 50.
+No response. A is down.
+
+D starts the voting. It should send election data to all nodes in its copy (51).
+
+- If it gets a direct response from one a node X in its own discovery list that the election count > 51, then it means that either:
+  - D was unavailable for some time
+  - X was unavailable for some time -> this means that there is no guarantee that 55 is the latest
+
+Node K just joined. First, it will get the election count from the leader. So 50.
+
+Node D, C, B, L, M, N voted on election 51. Later, L discovered X with an election count of 58.
+L will broadcast this message to D, C, B, M, N. And it is expected to hear from the other nodes about 58. Each will switch to 58 immedately.
+```
+
+
+PHASE 2: Can
+assumption: all the nodes in a voting are on the same page about who is managing the voting.
+```
+
+```
